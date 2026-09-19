@@ -1,0 +1,26 @@
+{
+  "name": "veno",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc6 --noEmit && vite build",
+    "build:emulator": "tsc6 --noEmit && vite build --mode development",
+    "emulators": "npm run build:emulator && firebase emulators:start",
+    "emulators:auth": "firebase emulators:start --only auth",
+    "preview": "vite preview",
+    "typecheck": "tsc6 --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run typecheck && npm run test && vite build"
+  },
+  "dependencies": {
+    "firebase": "^12.19.0"
+  },
+  "devDependencies": {
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
+    "vite": "^8.3.0",
+    "vitest": "^4.0.0"
+  }
+}

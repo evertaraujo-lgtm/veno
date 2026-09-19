@@ -1,0 +1,37 @@
+# Node / Vite
+node_modules/
+dist/
+dist-emulator/
+*.tsbuildinfo
+
+# IDEs
+.vs/
+.vscode/
+.idea/
+.tools/
+*.DotSettings.user
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+!.env.development
+**/service-account*.json
+**/*firebase-adminsdk*.json
+
+# Firebase and Google Cloud
+.firebase/
+firebase-debug.log
+firebase-debug.*.log
+firestore-debug.log
+ui-debug.log
+.emulator-data/
+.runtimeconfig.json
+
+# OS files
+.DS_Store
+Thumbs.db
+.fuse_hidden*
+
+# Tests
+coverage/
