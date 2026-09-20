@@ -1,4 +1,15 @@
 {
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "functions": {
+    "source": "functions",
+    "runtime": "nodejs22",
+    "predeploy": [
+      "npm --prefix \"$RESOURCE_DIR\" test"
+    ]
+  },
   "hosting": {
     "public": "dist-emulator",
     "ignore": [
@@ -16,7 +27,7 @@
           { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
           { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=()" },
           { "key": "X-Frame-Options", "value": "DENY" },
-          { "key": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' http://127.0.0.1:9199 https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://*.googleapis.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" }
+          { "key": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' http://127.0.0.1:9199 http://127.0.0.1:8180 ws://127.0.0.1:8180 http://127.0.0.1:5001 https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://*.googleapis.com https://*.cloudfunctions.net; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" }
         ]
       },
       {
@@ -30,6 +41,30 @@
         "headers": [
           { "key": "Cache-Control", "value": "no-cache" }
         ]
+      },
+      {
+        "source": "/",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-store, max-age=0" }
+        ]
+      },
+      {
+        "source": "/login",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-store, max-age=0" }
+        ]
+      },
+      {
+        "source": "/painel",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-store, max-age=0" }
+        ]
+      },
+      {
+        "source": "/painel/**",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-store, max-age=0" }
+        ]
       }
     ],
     "rewrites": [
@@ -41,6 +76,8 @@
   },
   "emulators": {
     "auth": { "host": "127.0.0.1", "port": 9199 },
+    "firestore": { "host": "127.0.0.1", "port": 8180 },
+    "functions": { "host": "127.0.0.1", "port": 5001 },
     "hosting": { "host": "127.0.0.1", "port": 5100 },
     "ui": { "enabled": true, "host": "127.0.0.1", "port": 4100 },
     "singleProjectMode": true

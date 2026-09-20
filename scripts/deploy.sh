@@ -16,7 +16,6 @@ required_variables=(
   VITE_FIREBASE_API_KEY
   VITE_FIREBASE_AUTH_DOMAIN
   VITE_FIREBASE_PROJECT_ID
-  VITE_ADMIN_EMAILS
 )
 
 for variable_name in "${required_variables[@]}"; do
@@ -26,8 +25,8 @@ for variable_name in "${required_variables[@]}"; do
   fi
 done
 
-if [[ -n "${VITE_FIREBASE_AUTH_EMULATOR_URL:-}" ]]; then
-  echo "Remova VITE_FIREBASE_AUTH_EMULATOR_URL antes de publicar em produção." >&2
+if [[ -n "${VITE_FIREBASE_AUTH_EMULATOR_URL:-}" || -n "${VITE_FIREBASE_FIRESTORE_EMULATOR_URL:-}" ]]; then
+  echo "Remova as URLs dos emuladores antes de publicar em produção." >&2
   exit 1
 fi
 
@@ -45,6 +44,6 @@ cd "${repository_root}"
 
 npm ci
 npm run check
-firebase deploy --only hosting --project "${project_id}" --config firebase.production.json
+firebase deploy --only firestore:rules,firestore:indexes,functions,hosting --project "${project_id}" --config firebase.production.json
 
 echo "Deploy concluído: https://${project_id}.web.app"

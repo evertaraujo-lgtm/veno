@@ -1,27 +1,48 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DASHBOARD_PERMISSION,
   authErrorMessage,
-  isEmailAllowed,
-  parseAllowedEmails,
+  grantAccess,
+  parseRoleRecord,
+  parseUserAccessRecord,
   routeForPath,
 } from './access';
 
 describe('controle de acesso', () => {
-  it('normaliza a lista de administradores', () => {
-    expect(parseAllowedEmails(' Admin@Veno.com, suporte@veno.com ')).toEqual([
-      'admin@veno.com',
-      'suporte@veno.com',
-    ]);
+  it('valida o vínculo entre usuário e papel', () => {
+    expect(parseUserAccessRecord({ active: true, roleId: ' admin ' })).toEqual({
+      active: true,
+      roleId: 'admin',
+    });
+    expect(parseUserAccessRecord({ active: true, roleId: '' })).toBeNull();
   });
 
-  it('nega acesso quando não há uma correspondência explícita', () => {
-    expect(isEmailAllowed('outro@veno.com', ['admin@veno.com'])).toBe(false);
-    expect(isEmailAllowed(null, ['admin@veno.com'])).toBe(false);
-    expect(isEmailAllowed('admin@veno.com', [])).toBe(false);
+  it('valida e normaliza as permissões do papel', () => {
+    expect(parseRoleRecord({
+      active: true,
+      name: ' Administrador ',
+      permissions: ['dashboard:view', 'dashboard:view', 'templates:read'],
+    })).toEqual({
+      active: true,
+      name: 'Administrador',
+      permissions: ['dashboard:view', 'templates:read'],
+    });
   });
 
-  it('compara e-mails sem diferenciar maiúsculas', () => {
-    expect(isEmailAllowed('Admin@Veno.com', ['admin@veno.com'])).toBe(true);
+  it('concede acesso somente a usuário e papel ativos com a permissão exigida', () => {
+    const role = parseRoleRecord({
+      active: true,
+      name: 'Administrador',
+      permissions: [DASHBOARD_PERMISSION],
+    });
+
+    expect(grantAccess({ active: true, roleId: 'admin' }, role, DASHBOARD_PERMISSION)).toEqual({
+      roleId: 'admin',
+      roleName: 'Administrador',
+      permissions: [DASHBOARD_PERMISSION],
+    });
+    expect(grantAccess({ active: false, roleId: 'admin' }, role, DASHBOARD_PERMISSION)).toBeNull();
+    expect(grantAccess({ active: true, roleId: 'admin' }, role, 'users:manage')).toBeNull();
   });
 });
 

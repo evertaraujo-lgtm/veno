@@ -1,0 +1,42 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function currentUserPath() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    function currentUser() {
+      return get(currentUserPath()).data;
+    }
+
+    function activeUser() {
+      return signedIn()
+        && exists(currentUserPath())
+        && currentUser().active == true
+        && currentUser().roleId is string;
+    }
+
+    function assignedRole(roleId) {
+      return activeUser() && currentUser().roleId == roleId;
+    }
+
+    match /users/{userId} {
+      allow get: if signedIn() && request.auth.uid == userId;
+      allow list, create, update, delete: if false;
+    }
+
+    match /roles/{roleId} {
+      allow get: if assignedRole(roleId);
+      allow list, create, update, delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,10 +1,11 @@
 import './style.css';
 import {
   authErrorMessage,
-  isEmailAllowed,
-  parseAllowedEmails,
   routeForPath,
+  type GrantedAccess,
 } from './access';
+import { authorizeUser, type AuthorizationResult } from './authorization';
+import { bindMetaPanel, metaPanelTemplate } from './meta';
 
 import { initializeApp } from 'firebase/app';
 import {
@@ -19,6 +20,16 @@ import {
   type Auth,
   type User,
 } from 'firebase/auth';
+import {
+  connectFirestoreEmulator,
+  getFirestore,
+  type Firestore,
+} from 'firebase/firestore/lite';
+import {
+  connectFunctionsEmulator,
+  getFunctions,
+  type Functions,
+} from 'firebase/functions';
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -26,21 +37,35 @@ const firebaseConfig = {
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
 };
 
-const configuredAdminEmails = parseAllowedEmails(import.meta.env.VITE_ADMIN_EMAILS);
-
 const requiredConfiguration = Object.entries(firebaseConfig).filter(([, value]) => !value);
-
-if (configuredAdminEmails.length === 0) {
-  requiredConfiguration.push(['adminEmails', undefined]);
-}
 
 const firebaseApp = requiredConfiguration.length === 0 ? initializeApp(firebaseConfig) : null;
 const auth = firebaseApp ? getAuth(firebaseApp) : null;
+const database = firebaseApp ? getFirestore(firebaseApp) : null;
+const cloudFunctions = firebaseApp ? getFunctions(firebaseApp, 'southamerica-east1') : null;
 
 if (auth && import.meta.env.VITE_FIREBASE_AUTH_EMULATOR_URL) {
   connectAuthEmulator(auth, import.meta.env.VITE_FIREBASE_AUTH_EMULATOR_URL, {
     disableWarnings: true,
   });
+}
+
+if (database && import.meta.env.VITE_FIREBASE_FIRESTORE_EMULATOR_URL) {
+  const emulatorUrl = new URL(import.meta.env.VITE_FIREBASE_FIRESTORE_EMULATOR_URL);
+  connectFirestoreEmulator(
+    database,
+    emulatorUrl.hostname,
+    Number(emulatorUrl.port || '80'),
+  );
+}
+
+if (cloudFunctions && import.meta.env.VITE_FIREBASE_FUNCTIONS_EMULATOR_URL) {
+  const emulatorUrl = new URL(import.meta.env.VITE_FIREBASE_FUNCTIONS_EMULATOR_URL);
+  connectFunctionsEmulator(
+    cloudFunctions,
+    emulatorUrl.hostname,
+    Number(emulatorUrl.port || '80'),
+  );
 }
 
 const rootElement = document.querySelector<HTMLDivElement>('#app');
@@ -50,10 +75,6 @@ if (!rootElement) {
 }
 
 const root: HTMLDivElement = rootElement;
-
-function isAdministrator(user: User | null): user is User {
-  return user !== null && isEmailAllowed(user.email, configuredAdminEmails);
-}
 
 function navigate(path: string): void {
   window.location.assign(path);
@@ -124,8 +145,11 @@ function loginTemplate(): string {
     </main>`;
 }
 
-function dashboardTemplate(user: User): string {
+function dashboardTemplate(user: User, access: GrantedAccess): string {
   const email = escapeHtml(user.email ?? '');
+  const metaPage = window.location.pathname.toLowerCase().startsWith('/painel/meta');
+  const metaSection = window.location.hash.toLowerCase();
+  const canManageMeta = access.permissions.includes('meta:manage');
   const initials = (user.displayName ?? user.email ?? 'VE')
     .split(/[\s@._-]+/)
     .filter(Boolean)
@@ -142,23 +166,23 @@ function dashboardTemplate(user: User): string {
 
         <nav class="sidebar-nav" aria-label="Navegação principal">
           <span class="nav-caption">Workspace</span>
-          <a class="nav-item active" href="/painel">
+          <a class="nav-item${metaPage ? '' : ' active'}" href="/painel">
             ${icon('M4 13h6V4H4zm10 7h6v-9h-6zM4 20h6v-3H4zm10-13h6V4h-6z')}
             Visão geral
           </a>
-          <span class="nav-item disabled" aria-disabled="true">
-            ${icon('M4 5h16v14H4zM8 9h8M8 13h6')}
-            Templates
-            <span>Em breve</span>
-          </span>
-          <span class="nav-item disabled" aria-disabled="true">
-            ${icon('m3 11 18-8-8 18-2-8z')}
-            Disparos
-          </span>
-          <span class="nav-item disabled" aria-disabled="true">
-            ${icon('M8 12h8M12 8v8M5 4h14v16H5z')}
-            Integrações
-          </span>
+          ${canManageMeta ? `
+            <a class="nav-item${metaPage && (metaSection === '#novo-template' || metaSection === '#templates') ? ' active' : ''}" href="/painel/meta#novo-template">
+              ${icon('M4 5h16v14H4zM8 9h8M8 13h6')}
+              Templates
+            </a>
+            <a class="nav-item${metaPage && metaSection === '#envio-teste' ? ' active' : ''}" href="/painel/meta#envio-teste">
+              ${icon('m3 11 18-8-8 18-2-8z')}
+              Disparos
+            </a>
+            <a class="nav-item${metaPage && !metaSection ? ' active' : ''}" href="/painel/meta">
+              ${icon('M8 12h8M12 8v8M5 4h14v16H5z')}
+              Configuração Meta
+            </a>` : ''}
         </nav>
 
         <div class="sidebar-bottom">
@@ -173,7 +197,14 @@ function dashboardTemplate(user: User): string {
         </div>
       </aside>
 
-      <main class="dashboard-main">
+      <main class="dashboard-main${metaPage ? ' meta-main' : ''}">
+        ${metaPage ? metaPanelTemplate() : overviewTemplate(email, initials, access)}
+      </main>
+    </div>`;
+}
+
+function overviewTemplate(email: string, initials: string, access: GrantedAccess): string {
+  return `
         <header class="dashboard-header">
           <div>
             <span class="eyebrow"><i></i> Operação online</span>
@@ -182,7 +213,7 @@ function dashboardTemplate(user: User): string {
           </div>
           <div class="user-chip" title="${email}">
             <span>${escapeHtml(initials)}</span>
-            <div><strong>Administrador</strong><small>${email}</small></div>
+            <div><strong>${escapeHtml(access.roleName)}</strong><small>${email}</small></div>
           </div>
         </header>
 
@@ -216,8 +247,7 @@ function dashboardTemplate(user: User): string {
             </ol>
           </article>
         </section>
-      </main>
-    </div>`;
+      `;
 }
 
 function metricCard(className: string, path: string, label: string, value: string, detail: string): string {
@@ -248,7 +278,7 @@ function renderConfigurationError(missingKeys: string[]): void {
     </main>`;
 }
 
-function renderLogin(firebaseAuth: Auth): void {
+function renderLogin(firebaseAuth: Auth, initialMessage = ''): void {
   document.title = 'Entrar — Veno';
   document.body.className = 'auth-page';
   root.innerHTML = loginTemplate();
@@ -264,6 +294,8 @@ function renderLogin(firebaseAuth: Auth): void {
     throw new Error('Formulário de login incompleto.');
   }
 
+  errorElement.textContent = initialMessage;
+
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     errorElement.textContent = '';
@@ -277,19 +309,11 @@ function renderLogin(firebaseAuth: Auth): void {
 
     try {
       await setPersistence(firebaseAuth, browserLocalPersistence);
-      const credential = await signInWithEmailAndPassword(
+      await signInWithEmailAndPassword(
         firebaseAuth,
         emailInput.value.trim(),
         passwordInput.value,
       );
-
-      if (!isAdministrator(credential.user)) {
-        await signOut(firebaseAuth);
-        errorElement.textContent = 'Sua conta não possui acesso ao Veno.';
-        return;
-      }
-
-      navigate('/painel');
     } catch (error) {
       errorElement.textContent = authErrorMessage(error);
     } finally {
@@ -318,18 +342,95 @@ function renderLogin(firebaseAuth: Auth): void {
   });
 }
 
-function renderDashboard(user: User, firebaseAuth: Auth): void {
-  document.title = 'Painel — Veno';
+function renderDashboard(user: User, access: GrantedAccess, firebaseAuth: Auth, functions: Functions): void {
+  const metaPage = window.location.pathname.toLowerCase().startsWith('/painel/meta');
+
+  if (metaPage && !access.permissions.includes('meta:manage')) {
+    navigate('/painel');
+    return;
+  }
+
+  document.title = metaPage ? 'Configuração Meta — Veno' : 'Painel — Veno';
   document.body.className = 'dashboard-page';
-  root.innerHTML = dashboardTemplate(user);
+  root.innerHTML = dashboardTemplate(user, access);
 
   document.querySelector<HTMLButtonElement>('#logout-button')?.addEventListener('click', async () => {
     await signOut(firebaseAuth);
     navigate('/login');
   });
+
+  if (metaPage) {
+    void bindMetaPanel(functions).catch((error: unknown) => {
+      const message = document.querySelector<HTMLParagraphElement>('#meta-page-message');
+      const connection = document.querySelector<HTMLDivElement>('#meta-connection');
+      const detail = error instanceof Error ? error.message : 'Erro inesperado ao iniciar a tela.';
+
+      if (message) {
+        message.textContent = `Não foi possível iniciar o painel da Meta: ${detail}`;
+      }
+
+      if (connection) {
+        connection.className = 'connection-chip disconnected';
+        connection.textContent = 'Painel indisponível';
+      }
+    });
+  }
 }
 
-if (!auth) {
+function authorizationErrorMessage(result: AuthorizationResult): string {
+  if (result.granted) {
+    return '';
+  }
+
+  return result.reason === 'denied'
+    ? 'Sua conta ou papel está desativado ou não possui a permissão necessária.'
+    : 'Seu usuário ainda não possui um papel válido no Veno.';
+}
+
+async function handleAuthState(
+  user: User | null,
+  firebaseAuth: Auth,
+  firestore: Firestore,
+  functions: Functions,
+): Promise<void> {
+  const route = currentRoute();
+
+  if (!user) {
+    if (route === '/painel') {
+      navigate('/login');
+    } else if (!document.querySelector('#login-form')) {
+      renderLogin(firebaseAuth);
+    }
+    return;
+  }
+
+  let result: AuthorizationResult;
+
+  try {
+    result = await authorizeUser(firestore, user);
+  } catch {
+    await signOut(firebaseAuth);
+    window.history.replaceState({}, '', '/login');
+    renderLogin(firebaseAuth, 'Não foi possível validar seu acesso no momento. Tente novamente.');
+    return;
+  }
+
+  if (!result.granted) {
+    await signOut(firebaseAuth);
+    window.history.replaceState({}, '', '/login');
+    renderLogin(firebaseAuth, authorizationErrorMessage(result));
+    return;
+  }
+
+  if (route === '/login') {
+    navigate('/painel');
+    return;
+  }
+
+  renderDashboard(user, result.access, firebaseAuth, functions);
+}
+
+if (!auth || !database || !cloudFunctions) {
   renderConfigurationError(requiredConfiguration.map(([key]) => key));
 } else {
   if (currentRoute() === '/login') {
@@ -337,25 +438,6 @@ if (!auth) {
   }
 
   onAuthStateChanged(auth, (user) => {
-    const route = currentRoute();
-
-    if (route === '/painel') {
-      if (!isAdministrator(user)) {
-        void signOut(auth).finally(() => navigate('/login'));
-        return;
-      }
-
-      renderDashboard(user, auth);
-      return;
-    }
-
-    if (isAdministrator(user)) {
-      navigate('/painel');
-      return;
-    }
-
-    if (!document.querySelector('#login-form')) {
-      renderLogin(auth);
-    }
+    void handleAuthState(user, auth, database, cloudFunctions);
   });
 }
