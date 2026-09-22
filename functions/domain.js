@@ -54,16 +54,76 @@ export function buildCreateTemplatePayload(template) {
   };
 }
 
-export function buildSendTemplatePayload(recipient, templateName, language) {
+function placeholders(text) {
+  if (typeof text !== 'string') {
+    return [];
+  }
+
+  return [...text.matchAll(/\{\{\s*([^{}]+?)\s*\}\}/g)].map((match) => match[1].trim());
+}
+
+export function templateParameterDefinitions(template) {
+  const named = String(template?.parameter_format ?? '').toUpperCase() === 'NAMED';
+  const definitions = [];
+
+  for (const component of Array.isArray(template?.components) ? template.components : []) {
+    const componentType = String(component?.type ?? '').toLowerCase();
+
+    if (!['header', 'body'].includes(componentType)) {
+      continue;
+    }
+
+    const seen = new Set();
+    for (const name of placeholders(component?.text)) {
+      if (seen.has(name)) {
+        continue;
+      }
+
+      seen.add(name);
+      definitions.push({
+        key: `${componentType}:${name}`,
+        component: componentType,
+        name,
+        named,
+      });
+    }
+  }
+
+  return definitions;
+}
+
+export function buildSendTemplatePayload(
+  recipient,
+  templateName,
+  language,
+  definitions = [],
+  values = {},
+) {
+  const template = {
+    name: templateName,
+    language: { code: language },
+  };
+  const componentNames = [...new Set(definitions.map((definition) => definition.component))];
+
+  if (componentNames.length > 0) {
+    template.components = componentNames.map((component) => ({
+      type: component,
+      parameters: definitions
+        .filter((definition) => definition.component === component)
+        .map((definition) => ({
+          type: 'text',
+          ...(definition.named ? { parameter_name: definition.name } : {}),
+          text: values[definition.key],
+        })),
+    }));
+  }
+
   return {
     messaging_product: 'whatsapp',
     recipient_type: 'individual',
     to: recipient,
     type: 'template',
-    template: {
-      name: templateName,
-      language: { code: language },
-    },
+    template,
   };
 }
 
@@ -75,8 +135,28 @@ export function parseSendInput(value) {
   const recipient = normalizePhoneNumber(value.recipient);
   const templateName = typeof value.templateName === 'string' ? value.templateName.trim() : '';
   const language = typeof value.language === 'string' ? value.language.trim() : '';
+  const rawParameters = value.parameters ?? {};
+
+  if (!rawParameters || typeof rawParameters !== 'object' || Array.isArray(rawParameters)) {
+    return null;
+  }
+
+  const entries = Object.entries(rawParameters);
+  if (
+    entries.length > 50
+    || entries.some(([key, parameter]) => (
+      key.length === 0
+      || key.length > 128
+      || typeof parameter !== 'string'
+      || parameter.trim().length > 1024
+    ))
+  ) {
+    return null;
+  }
+
+  const parameters = Object.fromEntries(entries.map(([key, parameter]) => [key, parameter.trim()]));
 
   return recipient && TEMPLATE_NAME_PATTERN.test(templateName) && LANGUAGE_PATTERN.test(language)
-    ? { recipient, templateName, language }
+    ? { recipient, templateName, language, parameters }
     : null;
 }

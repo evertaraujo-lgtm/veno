@@ -1,8 +1,8 @@
 import { defineConfig } from 'vite';
 
-export default defineConfig(({ mode }) => ({
+export default defineConfig(() => ({
   build: {
-    outDir: mode === 'development' ? 'dist-emulator' : 'dist',
+    outDir: 'dist',
   },
   server: {
     host: '127.0.0.1',

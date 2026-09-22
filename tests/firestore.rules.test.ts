@@ -91,5 +91,11 @@ describe('regras RBAC do Firestore', () => {
       name: 'template_injetado',
     }));
     await assertFails(getDoc(doc(database, 'testMessages', 'message-1')));
+    await assertFails(getDoc(doc(database, 'metaWebhookEvents', 'event-1')));
+    await assertFails(getDoc(doc(database, 'metaIncomingMessages', 'message-1')));
+    await assertFails(getDoc(doc(database, 'metaMessageStatuses', 'status-1')));
+    await assertFails(setDoc(doc(database, 'metaWebhookEvents', 'event-1'), {
+      kind: 'message',
+    }));
   });
 });

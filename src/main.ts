@@ -5,7 +5,8 @@ import {
   type GrantedAccess,
 } from './access';
 import { authorizeUser, type AuthorizationResult } from './authorization';
-import { bindMetaPanel, metaPanelTemplate } from './meta';
+import { bindMetaPanel, metaPanelTemplate, type MetaView } from './meta';
+import { bindWebhookPanel, webhookPanelTemplate } from './webhooks';
 
 import { initializeApp } from 'firebase/app';
 import {
@@ -147,8 +148,10 @@ function loginTemplate(): string {
 
 function dashboardTemplate(user: User, access: GrantedAccess): string {
   const email = escapeHtml(user.email ?? '');
-  const metaPage = window.location.pathname.toLowerCase().startsWith('/painel/meta');
-  const metaSection = window.location.hash.toLowerCase();
+  const pathname = window.location.pathname.toLowerCase().replace(/\/$/, '');
+  const metaView = metaViewForPath(pathname);
+  const webhookPage = pathname === '/painel/webhooks';
+  const overviewPage = !metaView && !webhookPage;
   const canManageMeta = access.permissions.includes('meta:manage');
   const initials = (user.displayName ?? user.email ?? 'VE')
     .split(/[\s@._-]+/)
@@ -166,22 +169,26 @@ function dashboardTemplate(user: User, access: GrantedAccess): string {
 
         <nav class="sidebar-nav" aria-label="Navegação principal">
           <span class="nav-caption">Workspace</span>
-          <a class="nav-item${metaPage ? '' : ' active'}" href="/painel">
+          <a class="nav-item${overviewPage ? ' active' : ''}" href="/painel">
             ${icon('M4 13h6V4H4zm10 7h6v-9h-6zM4 20h6v-3H4zm10-13h6V4h-6z')}
             Visão geral
           </a>
           ${canManageMeta ? `
-            <a class="nav-item${metaPage && (metaSection === '#novo-template' || metaSection === '#templates') ? ' active' : ''}" href="/painel/meta#novo-template">
+            <a class="nav-item${metaView === 'templates' ? ' active' : ''}" href="/painel/templates">
               ${icon('M4 5h16v14H4zM8 9h8M8 13h6')}
               Templates
             </a>
-            <a class="nav-item${metaPage && metaSection === '#envio-teste' ? ' active' : ''}" href="/painel/meta#envio-teste">
+            <a class="nav-item${metaView === 'disparos' ? ' active' : ''}" href="/painel/disparos">
               ${icon('m3 11 18-8-8 18-2-8z')}
               Disparos
             </a>
-            <a class="nav-item${metaPage && !metaSection ? ' active' : ''}" href="/painel/meta">
+            <a class="nav-item${metaView === 'config' ? ' active' : ''}" href="/painel/meta">
               ${icon('M8 12h8M12 8v8M5 4h14v16H5z')}
               Configuração Meta
+            </a>
+            <a class="nav-item${webhookPage ? ' active' : ''}" href="/painel/webhooks">
+              ${icon('M21 11.5a8.1 8.1 0 0 1-9 8 8.3 8.3 0 0 1-3.47-.9L3 20l1.43-4.18A8 8 0 1 1 21 11.5Z')}
+              Eventos WhatsApp
             </a>` : ''}
         </nav>
 
@@ -197,10 +204,17 @@ function dashboardTemplate(user: User, access: GrantedAccess): string {
         </div>
       </aside>
 
-      <main class="dashboard-main${metaPage ? ' meta-main' : ''}">
-        ${metaPage ? metaPanelTemplate() : overviewTemplate(email, initials, access)}
+      <main class="dashboard-main${metaView || webhookPage ? ' meta-main' : ''}">
+        ${webhookPage ? webhookPanelTemplate() : metaView ? metaPanelTemplate(metaView) : overviewTemplate(email, initials, access)}
       </main>
     </div>`;
+}
+
+function metaViewForPath(pathname: string): MetaView | null {
+  if (pathname === '/painel/meta') return 'config';
+  if (pathname === '/painel/templates') return 'templates';
+  if (pathname === '/painel/disparos') return 'disparos';
+  return null;
 }
 
 function overviewTemplate(email: string, initials: string, access: GrantedAccess): string {
@@ -343,14 +357,31 @@ function renderLogin(firebaseAuth: Auth, initialMessage = ''): void {
 }
 
 function renderDashboard(user: User, access: GrantedAccess, firebaseAuth: Auth, functions: Functions): void {
-  const metaPage = window.location.pathname.toLowerCase().startsWith('/painel/meta');
+  const pathname = window.location.pathname.toLowerCase().replace(/\/$/, '');
+  const metaView = metaViewForPath(pathname);
+  const webhookPage = pathname === '/painel/webhooks';
 
-  if (metaPage && !access.permissions.includes('meta:manage')) {
+  if (metaView === 'config') {
+    const oldSection = window.location.hash.toLowerCase();
+    if (oldSection === '#novo-template' || oldSection === '#templates') {
+      navigate('/painel/templates');
+      return;
+    }
+    if (oldSection === '#envio-teste') {
+      navigate('/painel/disparos');
+      return;
+    }
+  }
+
+  if ((metaView || webhookPage) && !access.permissions.includes('meta:manage')) {
     navigate('/painel');
     return;
   }
 
-  document.title = metaPage ? 'Configuração Meta — Veno' : 'Painel — Veno';
+  document.title = webhookPage ? 'Eventos WhatsApp — Veno'
+    : metaView === 'templates' ? 'Templates — Veno'
+      : metaView === 'disparos' ? 'Disparos — Veno'
+        : metaView === 'config' ? 'Configuração Meta — Veno' : 'Painel — Veno';
   document.body.className = 'dashboard-page';
   root.innerHTML = dashboardTemplate(user, access);
 
@@ -359,8 +390,10 @@ function renderDashboard(user: User, access: GrantedAccess, firebaseAuth: Auth, 
     navigate('/login');
   });
 
-  if (metaPage) {
-    void bindMetaPanel(functions).catch((error: unknown) => {
+  if (webhookPage) {
+    void bindWebhookPanel(functions);
+  } else if (metaView) {
+    void bindMetaPanel(functions, metaView).catch((error: unknown) => {
       const message = document.querySelector<HTMLParagraphElement>('#meta-page-message');
       const connection = document.querySelector<HTMLDivElement>('#meta-connection');
       const detail = error instanceof Error ? error.message : 'Erro inesperado ao iniciar a tela.';

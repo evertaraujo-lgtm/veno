@@ -11,7 +11,7 @@
     ]
   },
   "hosting": {
-    "public": "dist-emulator",
+    "public": "dist",
     "ignore": [
       "firebase.json",
       "**/.*",

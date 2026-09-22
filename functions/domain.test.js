@@ -6,6 +6,7 @@ import {
   normalizePhoneNumber,
   parseSendInput,
   parseTemplateInput,
+  templateParameterDefinitions,
 } from './domain.js';
 
 test('normaliza telefone internacional e rejeita valores inválidos', () => {
@@ -74,5 +75,61 @@ test('monta payloads compatíveis com a Cloud API', () => {
     recipient: '5511999999999',
     templateName: 'aviso_teste',
     language: 'pt_BR',
+    parameters: {},
   });
+});
+
+test('extrai e envia parâmetros nomeados na ordem do template', () => {
+  const definitions = templateParameterDefinitions({
+    parameter_format: 'NAMED',
+    components: [{
+      type: 'BODY',
+      text: 'Olá, {{nome}}. O evento {{evento}} espera você, {{nome}}.',
+    }],
+  });
+
+  assert.deepEqual(definitions, [
+    { key: 'body:nome', component: 'body', name: 'nome', named: true },
+    { key: 'body:evento', component: 'body', name: 'evento', named: true },
+  ]);
+  assert.deepEqual(buildSendTemplatePayload(
+    '5511999999999',
+    'lembrete',
+    'pt_BR',
+    definitions,
+    { 'body:nome': 'Everton', 'body:evento': 'Reunião' },
+  ).template.components, [{
+    type: 'body',
+    parameters: [
+      { type: 'text', parameter_name: 'nome', text: 'Everton' },
+      { type: 'text', parameter_name: 'evento', text: 'Reunião' },
+    ],
+  }]);
+});
+
+test('extrai e envia parâmetros posicionais de cabeçalho e corpo', () => {
+  const definitions = templateParameterDefinitions({
+    parameter_format: 'POSITIONAL',
+    components: [
+      { type: 'HEADER', text: 'Pedido {{1}}' },
+      { type: 'BODY', text: 'Olá {{1}}, entrega em {{2}}.' },
+    ],
+  });
+
+  assert.deepEqual(buildSendTemplatePayload(
+    '5511999999999',
+    'pedido',
+    'pt_BR',
+    definitions,
+    { 'header:1': '42', 'body:1': 'Everton', 'body:2': 'Hoje' },
+  ).template.components, [
+    { type: 'header', parameters: [{ type: 'text', text: '42' }] },
+    {
+      type: 'body',
+      parameters: [
+        { type: 'text', text: 'Everton' },
+        { type: 'text', text: 'Hoje' },
+      ],
+    },
+  ]);
 });

@@ -6,40 +6,20 @@ const targetResponse = await fetch(
   { method: 'PUT' },
 );
 
-if (!targetResponse.ok) {
-  throw new Error(`Chrome DevTools indisponível: ${targetResponse.status}`);
-}
+if (!targetResponse.ok) throw new Error(`Chrome DevTools indisponível: ${targetResponse.status}`);
 
 const target = await targetResponse.json();
 const socket = new WebSocket(target.webSocketDebuggerUrl);
 const pending = new Map();
-const browserEvents = [];
 let sequence = 0;
 
 socket.addEventListener('message', (event) => {
   const payload = JSON.parse(event.data);
-
-  if (payload.id) {
-    const request = pending.get(payload.id);
-    if (request) {
-      pending.delete(payload.id);
-      payload.error ? request.reject(payload.error) : request.resolve(payload.result);
-    }
-    return;
-  }
-
-  if (payload.method === 'Runtime.exceptionThrown') {
-    browserEvents.push(`exception: ${payload.params.exceptionDetails.text}`);
-  }
-
-  if (payload.method === 'Runtime.consoleAPICalled') {
-    const values = payload.params.args.map((item) => item.value ?? item.description).join(' ');
-    browserEvents.push(`console.${payload.params.type}: ${values}`);
-  }
-
-  if (payload.method === 'Network.loadingFailed') {
-    browserEvents.push(`network: ${payload.params.errorText}`);
-  }
+  if (!payload.id) return;
+  const request = pending.get(payload.id);
+  if (!request) return;
+  pending.delete(payload.id);
+  payload.error ? request.reject(payload.error) : request.resolve(payload.result);
 });
 
 await new Promise((resolve, reject) => {
@@ -54,91 +34,74 @@ function command(method, params = {}) {
 }
 
 async function evaluate(expression) {
-  const result = await command('Runtime.evaluate', {
-    expression,
-    awaitPromise: true,
-    returnByValue: true,
-  });
-
-  if (result.exceptionDetails) {
-    throw new Error(result.exceptionDetails.text);
-  }
-
+  const result = await command('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
+  if (result.exceptionDetails) throw new Error(result.exceptionDetails.text);
   return result.result.value;
 }
 
-async function waitFor(expression, timeout = 10000) {
+async function waitFor(expression, timeout = 15000) {
   const startedAt = Date.now();
-
   while (Date.now() - startedAt < timeout) {
-    if (await evaluate(expression)) return;
+    try {
+      if (await evaluate(expression)) return;
+    } catch {
+      // A navegação pode substituir o contexto JavaScript entre duas tentativas.
+    }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-
   throw new Error(`Tempo esgotado aguardando: ${expression}`);
 }
 
-await command('Runtime.enable');
-await command('Network.enable');
-await waitFor("document.readyState === 'complete'");
-
-if (await evaluate("Boolean(document.querySelector('#login-form'))")) {
-  await evaluate(`(() => {
-    const setValue = (selector, value) => {
-      const element = document.querySelector(selector);
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-      setter.call(element, value);
-      element.dispatchEvent(new Event('input', { bubbles: true }));
-    };
-    setValue('#email', 'admin@veno.local');
-    setValue('#password', 'Veno@123');
-    document.querySelector('#login-form').requestSubmit();
+async function clickLink(path) {
+  const rectangle = await evaluate(`(() => {
+    const link = document.querySelector('.sidebar-nav a[href="${path}"]');
+    if (!link) return null;
+    const rect = link.getBoundingClientRect();
+    return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
   })()`);
+  if (!rectangle) throw new Error(`Link ausente: ${path}`);
+
+  await command('Input.dispatchMouseEvent', { type: 'mousePressed', ...rectangle, button: 'left', clickCount: 1 });
+  await command('Input.dispatchMouseEvent', { type: 'mouseReleased', ...rectangle, button: 'left', clickCount: 1 });
+  await waitFor(`location.pathname === '${path}' && document.querySelector('.sidebar-nav a.active')?.getAttribute('href') === '${path}'`);
 }
 
-await waitFor("location.pathname === '/painel'", 15000);
-await evaluate("location.assign('/painel/meta')");
-await waitFor("location.pathname === '/painel/meta' && Boolean(document.querySelector('#template-form'))", 15000);
-await waitFor("document.querySelector('#meta-connection')?.textContent !== 'Verificando conexão…'", 25000);
+try {
+  await command('Runtime.enable');
+  await waitFor("document.readyState === 'complete'");
 
-const initial = await evaluate(`(() => ({
-  title: document.title,
-  connection: document.querySelector('#meta-connection')?.textContent,
-  refreshDisabled: document.querySelector('#refresh-templates')?.disabled,
-  createDisabled: document.querySelector('#template-form button[type="submit"]')?.disabled,
-  sendDisabled: document.querySelector('#test-send-button')?.disabled,
-}))()`);
-
-await evaluate("document.querySelector('#refresh-templates').click()");
-await waitFor("document.querySelector('#refresh-templates')?.disabled === true");
-await waitFor("document.querySelector('#refresh-templates')?.disabled === false", 25000);
-
-const afterClick = await evaluate(`(() => ({
-  connection: document.querySelector('#meta-connection')?.textContent,
-  message: document.querySelector('#meta-page-message')?.textContent,
-  refreshDisabled: document.querySelector('#refresh-templates')?.disabled,
-}))()`);
-
-await evaluate(`(() => {
-  const values = {
-    '[name="name"]': 'teste_automatizado',
-    '[name="body"]': 'Mensagem de teste automatizado.',
-  };
-  for (const [selector, value] of Object.entries(values)) {
-    const element = document.querySelector(selector);
-    element.value = value;
-    element.dispatchEvent(new Event('input', { bubbles: true }));
+  if (await evaluate("Boolean(document.querySelector('#login-form'))")) {
+    await evaluate(`(() => {
+      document.querySelector('#email').value = 'admin@veno.local';
+      document.querySelector('#password').value = 'Veno@123';
+      document.querySelector('#login-form').requestSubmit();
+    })()`);
   }
-  document.querySelector('#template-form').requestSubmit();
-})()`);
-await waitFor("document.querySelector('#create-template-button')?.disabled === true");
-await waitFor("document.querySelector('#create-template-button')?.disabled === false", 25000);
 
-const afterCreate = await evaluate(`(() => ({
-  message: document.querySelector('#meta-page-message')?.textContent,
-  createLabel: document.querySelector('#create-template-button span')?.textContent,
-  createDisabled: document.querySelector('#create-template-button')?.disabled,
-}))()`);
+  await waitFor("location.pathname === '/painel' && Boolean(document.querySelector('.sidebar-nav'))");
 
-console.log(JSON.stringify({ initial, afterClick, afterCreate, browserEvents }, null, 2));
-socket.close();
+  const routes = [
+    ['/painel/templates', 'Templates', '#template-form', '#templates-list'],
+    ['/painel/disparos', 'Disparos', '#test-send-form'],
+    ['/painel/meta', 'Configuração Meta', '#meta-account-summary'],
+    ['/painel/webhooks', 'Eventos WhatsApp', '#webhook-events'],
+    ['/painel', 'Olá, seja bem-vindo.'],
+  ];
+
+  for (const [source] of routes) {
+    await clickLink(source);
+    for (const [path, heading, ...selectors] of routes) {
+      await clickLink(path);
+      const actual = await evaluate(`(() => ({
+        heading: document.querySelector('main h1')?.textContent?.trim(),
+        selectors: ${JSON.stringify(selectors)}.map((selector) => Boolean(document.querySelector(selector))),
+      }))()`);
+      if (actual.heading !== heading || actual.selectors.some((present) => !present)) {
+        throw new Error(`Tela incorreta ao navegar de ${source} para ${path}: ${JSON.stringify(actual)}`);
+      }
+      console.log(`${source} → ${path}: ${actual.heading}`);
+    }
+  }
+} finally {
+  socket.close();
+}
